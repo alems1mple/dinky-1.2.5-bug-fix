@@ -1,0 +1,39 @@
+diff --git a/dinky-admin/src/main/java/org/dinky/service/impl/SchedulerServiceImpl.java b/dinky-admin/src/main/java/org/dinky/service/impl/SchedulerServiceImpl.java
+--- a/dinky-admin/src/main/java/org/dinky/service/impl/SchedulerServiceImpl.java
++++ b/dinky-admin/src/main/java/org/dinky/service/impl/SchedulerServiceImpl.java
+@@ -40,6 +40,9 @@
+ 
+ import java.util.ArrayList;
+ import java.util.Collections;
++import java.util.LinkedHashMap;
+ import java.util.List;
++import java.util.Map;
++import java.util.Objects;
+ 
+ import org.springframework.stereotype.Service;
+@@ -171,4 +174,25 @@
+         List<ProcessTaskRelation> processTaskRelationList = dagData.getProcessTaskRelationList();
++        // Protect subsequent updates from duplicating previously returned DAG edges.
++        // Keep the original order and reject conflicting metadata for the same edge.
++        Map<String, ProcessTaskRelation> uniqueRelations = new LinkedHashMap<>();
++        for (ProcessTaskRelation relation : processTaskRelationList) {
++            String edge = relation.getPreTaskCode() + "->" + relation.getPostTaskCode();
++            ProcessTaskRelation previous = uniqueRelations.putIfAbsent(edge, relation);
++            if (previous != null) {
++                if (!Objects.equals(previous.getPreTaskVersion(), relation.getPreTaskVersion())
++                        || !Objects.equals(previous.getPostTaskVersion(), relation.getPostTaskVersion())
++                        || !Objects.equals(previous.getConditionType(), relation.getConditionType())
++                        || !Objects.equals(previous.getConditionParams(), relation.getConditionParams())) {
++                    log.error("Conflicting DAG relation, workflow={}, edge={}", process.getCode(), edge);
++                    throw new IllegalStateException("Conflicting DolphinScheduler task relation: " + edge);
++                }
++            }
++        }
++        if (uniqueRelations.size() != processTaskRelationList.size()) {
++            log.warn("DAG relation dedup, workflow={}, before={}, after={}",
++                    process.getCode(), processTaskRelationList.size(), uniqueRelations.size());
++        }
++        processTaskRelationList = new ArrayList<>(uniqueRelations.values());
+         List<TaskDefinition> taskDefinitionList = dagData.getTaskDefinitionList();
+         List<DagNodeLocation> locations =
+                 new ArrayList<>(JsonUtils.toList(process.getLocations(), DagNodeLocation.class));
